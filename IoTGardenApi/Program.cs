@@ -66,7 +66,8 @@ app.MapControllers();
 app.MapPost("/api/uplink", async (
     HttpContext context,
     [FromServices] ApplicationDbContext dbContext,
-    [FromServices] Supabase.Client supabase) =>
+    [FromServices] Supabase.Client supabase,
+    [FromServices] ILogger<Program> logger) =>
 {
     try
     {
@@ -75,20 +76,20 @@ app.MapPost("/api/uplink", async (
         var body = await reader.ReadToEndAsync();
         var payload = JObject.Parse(body);
         
-        Console.WriteLine("=== Received Webhook ===");
-        Console.WriteLine($"Raw payload: {payload}");
+        logger.LogInformation("=== Received Webhook ===");
+        logger.LogInformation("Raw payload: {Payload}", payload);
         
         // ดึง device_id จาก payload
         var deviceId = payload["end_device_ids"]?["device_id"]?.ToString() ?? "unknown";
-        Console.WriteLine($"Device ID: {deviceId}");
+        logger.LogInformation("Device ID: {DeviceId}", deviceId);
         
         // ดึงค่า sensor จาก payload
         var decodedPayload = payload["uplink_message"]?["decoded_payload"];
-        Console.WriteLine($"Decoded payload: {decodedPayload}");
+        logger.LogInformation("Decoded payload: {DecodedPayload}", decodedPayload);
         
         if (decodedPayload == null)
         {
-            Console.WriteLine("❌ No decoded_payload found!");
+            logger.LogWarning("No decoded_payload found!");
             return Results.BadRequest("No decoded_payload found");
         }
 
