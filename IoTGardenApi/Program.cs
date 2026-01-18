@@ -5,8 +5,6 @@ using Supabase;
 using IoTGardenApi.Data;
 using IoTGardenApi.Models;
 
-// Enable legacy timestamp behavior removed as we use DateTimeOffset now - STRICT MODE
-
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -20,7 +18,7 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
 // ==========================================
-// ตั้งค่า Supabase (Using hardcoded credentials from previous version)
+// ตั้งค่า Supabase
 // ==========================================
 var supabaseUrl = "https://fjljkiwiobhbazzqusie.supabase.co";
 var supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqbGpraXdpb2JoYmF6enF1c2llIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY4MjIxMjcsImV4cCI6MjA4MjM5ODEyN30.7uoN-hInGd2pSWO9_XMlXuix6q0oyGvqrxnz9A00gh8";
@@ -31,7 +29,6 @@ var options = new Supabase.SupabaseOptions
     AutoConnectRealtime = true
 };
 
-// สร้าง Client
 var supabaseClient = new Supabase.Client(supabaseUrl, supabaseKey, options);
 await supabaseClient.InitializeAsync();
 
@@ -57,58 +54,46 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-// app.UseHttpsRedirection();
-
 app.UseCors("AllowAll");
-
 app.UseAuthorization();
-
 app.MapControllers();
 
-// Endpoint รับค่าจาก LoRaWAN Server (The Things Stack)
-app.MapPost("/api/uplink", async (HttpContext context, [FromServices] Supabase.Client supabaseClient, [FromServices] ApplicationDbContext dbContext) =>
+// ==========================================
+// TTN Webhook Endpoint
+// ==========================================
+app.MapPost("/api/uplink", async (
+    [FromBody] JObject payload,
+    [FromServices] ApplicationDbContext dbContext,
+    [FromServices] Supabase.Client supabase) =>
 {
     try
     {
-        // อ่าน raw body เพื่อ debug
-        context.Request.EnableBuffering();
-        using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
-        var rawBody = await reader.ReadToEndAsync();
-        context.Request.Body.Position = 0;
-        
         Console.WriteLine("=== Received Webhook ===");
-        Console.WriteLine($"Raw Payload: {rawBody}");
         
-        // Parse JSON
-        var payload = JObject.Parse(rawBody);
+        // ดึง device_id จาก payload
+        var deviceId = payload["end_device_ids"]?["device_id"]?.ToString() ?? "unknown";
+        Console.WriteLine($"Device ID: {deviceId}");
         
-        // ดึง decoded_payload (รองรับทั้ง TTN และ ChirpStack)
-        var decoded = payload["uplink_message"]?["decoded_payload"] 
-                      ?? payload["object"];
-
-        if (decoded == null)
+        // ดึงค่า sensor จาก payload
+        var decodedPayload = payload["uplink_message"]?["decoded_payload"];
+        if (decodedPayload == null)
         {
-            Console.WriteLine("❌ Error: No decoded_payload found");
-            Console.WriteLine($"Available keys: {string.Join(", ", payload.Properties().Select(p => p.Name))}");
-            return Results.BadRequest(new { error = "No decoded payload found", received_keys = payload.Properties().Select(p => p.Name) });
+            return Results.BadRequest("No decoded_payload found");
         }
 
-        Console.WriteLine($"Decoded Payload: {decoded}");
+        var temp = decodedPayload["temp"]?.ToObject<float>() ?? 0;
+        var humi = decodedPayload["humi"]?.ToObject<float>() ?? 0;
+        var ec = decodedPayload["ec"]?.ToObject<int>() ?? 0;
+        var ph = decodedPayload["ph"]?.ToObject<float>() ?? 0;
+        var n = decodedPayload["n"]?.ToObject<int>() ?? 0;
+        var p = decodedPayload["p"]?.ToObject<int>() ?? 0;
+        var k = decodedPayload["k"]?.ToObject<int>() ?? 0;
 
-        // Extract values with null safety
-        var temp = (float?)decoded["temp"] ?? (float?)decoded["temperature"] ?? 0f;
-        var humi = (float?)decoded["humi"] ?? (float?)decoded["humidity"] ?? 0f;
-        var ec = (int?)decoded["ec"] ?? 0;
-        var ph = (float?)decoded["ph"] ?? 0f;
-        var n = (int?)decoded["n"] ?? 0;
-        var p = (int?)decoded["p"] ?? 0;
-        var k = (int?)decoded["k"] ?? 0;
+        Console.WriteLine($"Temp={temp}°C, Humi={humi}%, PH={ph}, N={n}, P={p}, K={k}");
 
         // 1. บันทึกลง Supabase
         try
         {
-            var deviceId = payload["end_device_ids"]?["device_id"]?.ToString() ?? "unknown";
-            
             var supabaseLog = new SupabaseSensorLog
             {
                 device_id = deviceId,
@@ -119,100 +104,131 @@ app.MapPost("/api/uplink", async (HttpContext context, [FromServices] Supabase.C
                 n = n,
                 p = p,
                 k = k,
-                created_at = DateTime.UtcNow.AddHours(7) // Thailand timezone
+                created_at = DateTime.UtcNow.AddHours(7)
             };
             
-            await supabaseClient.From<SupabaseSensorLog>().Insert(supabaseLog);
-            Console.WriteLine($"✅ Saved to Supabase: Temp={temp}°C, Humi={humi}%");
+            await supabase.From<SupabaseSensorLog>().Insert(supabaseLog);
+            Console.WriteLine($"✅ Saved to Supabase");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"⚠️ Supabase Error: {ex.Message}");
         }
 
-        // 2. บันทึกลง Local Database (ตาม SensorController logic)
-        try
+        // 2. บันทึกลง Local Database
+        var now = DateTimeOffset.UtcNow.AddHours(7);
+        
+        // Find or create device
+        var device = await dbContext.Devices
+            .Include(d => d.Sensors)
+            .FirstOrDefaultAsync(d => d.DevEui == deviceId);
+        
+        if (device == null)
         {
-            var deviceId = payload["end_device_ids"]?["device_id"]?.ToString() ?? "unknown_device";
-            // Use Thailand timezone (UTC+7)
-            var now = DateTime.UtcNow.AddHours(7);
-            
-            // สร้าง/อัพเดท Sensor entries
-            var sensorData = new Dictionary<string, (double value, string unit)>
+            device = new Device
             {
-                { "temp", (temp, "°C") },
-                { "humi", (humi, "%") },
-                { "ec", (ec, "µS/cm") },
-                { "ph", (ph, "pH") },
-                { "n", (n, "mg/kg") },
-                { "p", (p, "mg/kg") },
-                { "k", (k, "mg/kg") }
+                DevEui = deviceId,
+                Name = $"Device {deviceId}",
+                Type = "LoRa Gateway",
+                IsOnline = true,
+                LastSeen = now
             };
-
-            foreach (var (key, (value, unit)) in sensorData)
+            dbContext.Devices.Add(device);
+            await dbContext.SaveChangesAsync();
+            
+            // Create default sensors
+            var sensorTypes = new[] { "temp", "humi", "ph", "ec", "n", "p", "k" };
+            foreach (var type in sensorTypes)
             {
-                // Don't skip zero values - display all sensors
-                
-                var sensorId = $"{deviceId}_{key}";
-                var sensor = await dbContext.Sensors.FindAsync(sensorId);
-                
-                if (sensor == null)
+                dbContext.Sensors.Add(new Sensor
                 {
-                    sensor = new Sensor
-                    {
-                        Id = sensorId,
-                        Name = $"{deviceId} {key.ToUpper()}",
-                        Type = key,
-                        Unit = unit
-                    };
-                    dbContext.Sensors.Add(sensor);
-                }
-                
-                sensor.Value = value;
+                    DeviceId = device.Id,
+                    SlaveId = "0x01",
+                    Type = type,
+                    Name = $"{type.ToUpper()} Sensor",
+                    Unit = type == "temp" ? "°C" : type == "humi" ? "%" : type == "ph" ? "pH" : type == "ec" ? "μS/cm" : "mg/kg",
+                    Value = 0,
+                    Status = "offline"
+                });
+            }
+            await dbContext.SaveChangesAsync();
+        }
+        else
+        {
+            device.IsOnline = true;
+            device.LastSeen = now;
+        }
+
+        // Update sensors and log data
+        var sensorData = new Dictionary<string, double>
+        {
+            ["temp"] = temp,
+            ["humi"] = humi,
+            ["ph"] = ph,
+            ["ec"] = ec,
+            ["n"] = n,
+            ["p"] = p,
+            ["k"] = k
+        };
+
+        foreach (var kvp in sensorData)
+        {
+            var sensor = device.Sensors.FirstOrDefault(s => s.Type == kvp.Key);
+            if (sensor != null)
+            {
+                sensor.Value = kvp.Value;
                 sensor.Status = "online";
                 sensor.LastSeen = now;
                 
-                // Log ทุก 15 นาที
-                var lastLog = await dbContext.SensorLogs
-                    .Where(l => l.SensorId == sensorId)
+                // Log every 15 minutes
+                var lastLog = await dbContext.SensorLogData
+                    .Where(l => l.SensorId == sensor.Id)
                     .OrderByDescending(l => l.Timestamp)
                     .FirstOrDefaultAsync();
                 
                 if (lastLog == null || (now - lastLog.Timestamp).TotalMinutes >= 15)
                 {
-                    dbContext.SensorLogs.Add(new SensorLog
+                    dbContext.SensorLogData.Add(new SensorLogData
                     {
-                        SensorId = sensorId,
-                        Value = value,
+                        SensorId = sensor.Id,
+                        Value = kvp.Value,
                         Timestamp = now
                     });
                 }
             }
-            
-            await dbContext.SaveChangesAsync();
-            Console.WriteLine($"✅ Saved to Local DB: Device={deviceId}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"⚠️ Local DB Error: {ex.Message}");
         }
 
-        return Results.Ok(new { status = "success", temp, humi, ec, ph, n, p, k });
+        await dbContext.SaveChangesAsync();
+        Console.WriteLine("✅ Saved to Local Database");
+
+        return Results.Ok(new { message = "Data received and saved successfully" });
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"❌ Fatal Error: {ex.Message}");
-        Console.WriteLine($"Stack Trace: {ex.StackTrace}");
+        Console.WriteLine($"❌ Error: {ex.Message}");
         return Results.Problem(ex.Message);
     }
 });
 
+// Seed database
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var context = services.GetRequiredService<ApplicationDbContext>();
+    DbInitializer.Initialize(context);
+}
+
 app.Run();
 
-// Model Class (Renamed to avoid conflict)
+// ==========================================
+// Supabase Model
+// ==========================================
 [Supabase.Postgrest.Attributes.Table("sensor_logs")]
 public class SupabaseSensorLog : Supabase.Postgrest.Models.BaseModel
 {
+    [Supabase.Postgrest.Attributes.Column("device_id")]
+    public string? device_id { get; set; }
+
     [Supabase.Postgrest.Attributes.Column("temp")]
     public float temp { get; set; }
 
@@ -233,9 +249,6 @@ public class SupabaseSensorLog : Supabase.Postgrest.Models.BaseModel
 
     [Supabase.Postgrest.Attributes.Column("k")]
     public int k { get; set; }
-
-    [Supabase.Postgrest.Attributes.Column("device_id")]
-    public string? device_id { get; set; }
 
     [Supabase.Postgrest.Attributes.Column("created_at")]
     public DateTime created_at { get; set; }

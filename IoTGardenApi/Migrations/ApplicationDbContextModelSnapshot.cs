@@ -22,7 +22,7 @@ namespace IoTGardenApi.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("IoTGardenApi.Models.Alert", b =>
+            modelBuilder.Entity("IoTGardenApi.Models.Device", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -30,50 +30,51 @@ namespace IoTGardenApi.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsRead")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Message")
+                    b.Property<string>("DevEui")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.HasKey("Id");
-
-                    b.ToTable("Alerts");
-                });
-
-            modelBuilder.Entity("IoTGardenApi.Models.Device", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsOn")
+                    b.Property<bool>("IsOnline")
                         .HasColumnType("boolean");
 
-                    b.Property<DateTime?>("LastActive")
+                    b.Property<DateTimeOffset>("LastSeen")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("DevEui")
+                        .IsUnique();
 
                     b.ToTable("Devices");
                 });
 
             modelBuilder.Entity("IoTGardenApi.Models.Sensor", b =>
                 {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
 
-                    b.Property<DateTime>("LastSeen")
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("DeviceId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("LastSeen")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SlaveId")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -94,10 +95,12 @@ namespace IoTGardenApi.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DeviceId", "Type");
+
                     b.ToTable("Sensors");
                 });
 
-            modelBuilder.Entity("IoTGardenApi.Models.SensorLog", b =>
+            modelBuilder.Entity("IoTGardenApi.Models.SensorLogData", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -105,11 +108,10 @@ namespace IoTGardenApi.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("SensorId")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("SensorId")
+                        .HasColumnType("integer");
 
-                    b.Property<DateTime>("Timestamp")
+                    b.Property<DateTimeOffset>("Timestamp")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<double>("Value")
@@ -117,7 +119,36 @@ namespace IoTGardenApi.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("SensorLogs");
+                    b.HasIndex("SensorId", "Timestamp");
+
+                    b.ToTable("SensorLogData");
+                });
+
+            modelBuilder.Entity("IoTGardenApi.Models.Sensor", b =>
+                {
+                    b.HasOne("IoTGardenApi.Models.Device", "Device")
+                        .WithMany("Sensors")
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Device");
+                });
+
+            modelBuilder.Entity("IoTGardenApi.Models.SensorLogData", b =>
+                {
+                    b.HasOne("IoTGardenApi.Models.Sensor", "Sensor")
+                        .WithMany()
+                        .HasForeignKey("SensorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Sensor");
+                });
+
+            modelBuilder.Entity("IoTGardenApi.Models.Device", b =>
+                {
+                    b.Navigation("Sensors");
                 });
 #pragma warning restore 612, 618
         }
