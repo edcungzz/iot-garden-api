@@ -107,8 +107,11 @@ app.MapPost("/api/uplink", async (HttpContext context, [FromServices] Supabase.C
         // 1. บันทึกลง Supabase
         try
         {
+            var deviceId = payload["end_device_ids"]?["device_id"]?.ToString() ?? "unknown";
+            
             var supabaseLog = new SupabaseSensorLog
             {
+                device_id = deviceId,
                 temp = temp,
                 humi = humi,
                 ec = ec,
@@ -230,6 +233,9 @@ public class SupabaseSensorLog : Supabase.Postgrest.Models.BaseModel
 
     [Supabase.Postgrest.Attributes.Column("k")]
     public int k { get; set; }
+
+    [Supabase.Postgrest.Attributes.Column("device_id")]
+    public string? device_id { get; set; }
 
     [Supabase.Postgrest.Attributes.Column("created_at")]
     public DateTime created_at { get; set; }
