@@ -1,0 +1,16 @@
+﻿{
+    "end_device_ids":  {
+                           "device_id":  "hetec5-1"
+                       },
+    "uplink_message":  {
+                           "decoded_payload":  {
+                                                   "n":  45,
+                                                   "k":  25,
+                                                   "p":  30,
+                                                   "temp":  28.5,
+                                                   "humi":  65.2,
+                                                   "ph":  6.8,
+                                                   "ec":  100
+                                               }
+                       }
+}

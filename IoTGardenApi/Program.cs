@@ -14,7 +14,9 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddNewtonsoftJson(); // Add support for Newtonsoft.Json
+
 builder.Services.AddOpenApi();
 
 // ==========================================
@@ -62,13 +64,19 @@ app.MapControllers();
 // TTN Webhook Endpoint
 // ==========================================
 app.MapPost("/api/uplink", async (
-    [FromBody] JObject payload,
+    HttpContext context,
     [FromServices] ApplicationDbContext dbContext,
     [FromServices] Supabase.Client supabase) =>
 {
     try
     {
+        // Read raw body as string then parse to JObject
+        using var reader = new StreamReader(context.Request.Body);
+        var body = await reader.ReadToEndAsync();
+        var payload = JObject.Parse(body);
+        
         Console.WriteLine("=== Received Webhook ===");
+        Console.WriteLine($"Raw payload: {payload}");
         
         // ดึง device_id จาก payload
         var deviceId = payload["end_device_ids"]?["device_id"]?.ToString() ?? "unknown";
@@ -76,8 +84,11 @@ app.MapPost("/api/uplink", async (
         
         // ดึงค่า sensor จาก payload
         var decodedPayload = payload["uplink_message"]?["decoded_payload"];
+        Console.WriteLine($"Decoded payload: {decodedPayload}");
+        
         if (decodedPayload == null)
         {
+            Console.WriteLine("❌ No decoded_payload found!");
             return Results.BadRequest("No decoded_payload found");
         }
 
