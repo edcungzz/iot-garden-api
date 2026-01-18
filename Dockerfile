@@ -12,6 +12,7 @@ RUN dotnet publish "IoTGardenApi.csproj" -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-ENV ASPNETCORE_URLS=http://+:${PORT:-8000}
-EXPOSE ${PORT:-8000}
+# Render will provide PORT environment variable
+ENV ASPNETCORE_URLS=http://+:$PORT
+EXPOSE 8000
 ENTRYPOINT ["dotnet", "IoTGardenApi.dll"]
