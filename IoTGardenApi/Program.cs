@@ -51,10 +51,6 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Configure port for Render (read from environment variable)
-var port = Environment.GetEnvironmentVariable("PORT") ?? "5021";
-app.Urls.Add($"http://0.0.0.0:{port}");
-
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
