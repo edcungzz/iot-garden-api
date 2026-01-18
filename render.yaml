@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: iot-garden-api
+    runtime: docker
+    plan: free
+    autoDeploy: false
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: ASPNETCORE_URLS
+        value: http://0.0.0.0:5021
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
